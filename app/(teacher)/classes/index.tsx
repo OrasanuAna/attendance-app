@@ -1,73 +1,115 @@
 import { router } from "expo-router";
-import { collection, getDocs, query, where } from "firebase/firestore";
-import { useCallback, useEffect, useState } from "react";
-import { FlatList, View } from "react-native";
-import { Button, Card, Text } from "react-native-paper";
+import { addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { useMemo, useState } from "react";
+import { Alert, ScrollView, View } from "react-native";
+import { Button, Card, RadioButton, Text, TextInput } from "react-native-paper";
 import { db } from "../../../config/firebaseConfig";
 import { useAuth } from "../../../src/auth/AuthContext";
 
-type ClassItem = {
-  id: string;
-  name: string;
-  startDate?: string;
-  endDate?: string;
-  recurrence?: string;
-};
+type Recurrence = "none" | "daily" | "weekly";
 
-export default function TeacherClasses() {
+export default function NewClass() {
   const { user } = useAuth();
-  const [items, setItems] = useState<ClassItem[]>([]);
+  const [name, setName] = useState("");
+  const [start, setStart] = useState(""); // ex: 2025-11-12T09:00
+  const [end, setEnd] = useState("");     // ex: 2025-11-12T10:30
+  const [recurrence, setRecurrence] = useState<Recurrence>("none");
   const [loading, setLoading] = useState(false);
 
-  const load = useCallback(async () => {
-    if (!user) return;
-    setLoading(true);
+  const isValid = useMemo(() => {
+    if (!user) return false;
+    if (!name.trim() || !start || !end) return false;
+    const dStart = new Date(start);
+    const dEnd = new Date(end);
+    if (isNaN(dStart.getTime()) || isNaN(dEnd.getTime())) return false;
+    if (dEnd <= dStart) return false;
+    return true;
+  }, [user, name, start, end]);
+
+  const validate = () => {
+    if (!user) { Alert.alert("Eroare", "Nu ești autentificat(ă)."); return false; }
+    if (!name.trim()) { Alert.alert("Validare", "Completează numele cursului."); return false; }
+    if (!start || !end) { Alert.alert("Validare", "Completează datele de început și sfârșit."); return false; }
+    const dStart = new Date(start);
+    const dEnd = new Date(end);
+    if (isNaN(dStart.getTime()) || isNaN(dEnd.getTime())) {
+      Alert.alert("Validare", "Date invalide. Exemplu: 2025-11-12T09:00");
+      return false;
+    }
+    if (dEnd <= dStart) {
+      Alert.alert("Validare", "Sfârșitul trebuie să fie după început.");
+      return false;
+    }
+    return true;
+  };
+
+  const onSave = async () => {
+    if (!validate()) return;
     try {
-      const q = query(collection(db, "classes"), where("teacherId", "==", user.uid));
-      const snap = await getDocs(q);
-      const rows = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) }));
-      setItems(rows);
+      setLoading(true);
+      await addDoc(collection(db, "classes"), {
+        name: name.trim(),
+        teacherId: user!.uid,
+        startDate: new Date(start).toISOString(),
+        endDate: new Date(end).toISOString(),
+        recurrence,                  // "none" | "daily" | "weekly"
+        createdAt: serverTimestamp(),
+      });
+      Alert.alert("Succes", "Cursul a fost creat.");
+      router.replace("/teacher/classes");
+    } catch (e: any) {
+      Alert.alert("Eroare", e?.message ?? "Nu s-a putut crea cursul.");
     } finally {
       setLoading(false);
     }
-  }, [user]);
-
-  useEffect(() => {
-    load();
-  }, [load]);
+  };
 
   return (
-    <View style={{ flex: 1, padding: 16, gap: 12 }}>
-      <Text variant="headlineSmall">Cursurile mele</Text>
+    <ScrollView contentContainerStyle={{ padding: 16 }}>
+      <Card>
+        <Card.Title title="Adaugă curs" />
+        <Card.Content style={{ gap: 12 }}>
+          <TextInput
+            label="Nume curs"
+            value={name}
+            onChangeText={setName}
+          />
 
-      {/* Rută RELATIVĂ către /classes/new */}
-      <Button mode="contained" onPress={() => router.push("./new")}>
-        Adaugă curs
-      </Button>
+          <Text variant="titleSmall">Data început</Text>
+          <TextInput
+            placeholder="Ex: 2025-11-12T09:00"
+            value={start}
+            onChangeText={setStart}
+            autoCapitalize="none"
+          />
 
-      <FlatList
-        data={items}
-        keyExtractor={(i) => i.id}
-        refreshing={loading}
-        onRefresh={load}
-        ListEmptyComponent={
-          !loading ? <Text style={{ marginTop: 12 }}>Nu ai încă niciun curs.</Text> : null
-        }
-        renderItem={({ item }) => (
-          <Card
-            style={{ marginVertical: 6 }}
-            // Rută RELATIVĂ către /classes/[id]
-            onPress={() => router.push(`./${item.id}`)}
+          <Text variant="titleSmall">Data sfârșit</Text>
+          <TextInput
+            placeholder="Ex: 2025-11-12T10:30"
+            value={end}
+            onChangeText={setEnd}
+            autoCapitalize="none"
+          />
+
+          <Text variant="titleSmall" style={{ marginTop: 8 }}>Recurență</Text>
+          <RadioButton.Group onValueChange={(v) => setRecurrence(v as Recurrence)} value={recurrence}>
+            <View style={{ flexDirection: "row", alignItems: "center", gap: 8 }}>
+              <RadioButton value="none" /><Text>Fără</Text>
+              <RadioButton value="daily" /><Text>Zilnic</Text>
+              <RadioButton value="weekly" /><Text>Săptămânal</Text>
+            </View>
+          </RadioButton.Group>
+
+          <Button
+            mode="contained"
+            onPress={onSave}
+            loading={loading}
+            disabled={loading || !isValid}
           >
-            <Card.Title title={item.name} />
-            <Card.Content>
-              <Text>Start: {item.startDate ?? "-"}</Text>
-              <Text>End: {item.endDate ?? "-"}</Text>
-              <Text>Recurență: {item.recurrence ?? "none"}</Text>
-            </Card.Content>
-          </Card>
-        )}
-      />
-    </View>
+            Salvează cursul
+          </Button>
+        </Card.Content>
+      </Card>
+    </ScrollView>
   );
 }
