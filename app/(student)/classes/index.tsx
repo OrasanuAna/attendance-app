@@ -1,6 +1,6 @@
 import { router } from "expo-router";
 import { addDoc, collection, getDocs, query, where } from "firebase/firestore";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { FlatList, View } from "react-native";
 import { Button, Card, Text } from "react-native-paper";
 import { db } from "../../../config/firebaseConfig";
@@ -11,29 +11,47 @@ export default function StudentClasses() {
   const [classes, setClasses] = useState<any[]>([]);
   const [myEnrolls, setMyEnrolls] = useState<string[]>([]);
   const [myPending, setMyPending] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
 
-  useEffect(() => {
-    const load = async () => {
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
       const cs = await getDocs(collection(db, "classes"));
-      setClasses(cs.docs.map(d => ({ id: d.id, ...(d.data() as any) })));
+      setClasses(cs.docs.map((d) => ({ id: d.id, ...(d.data() as any) })));
 
       if (user) {
-        const eq = query(collection(db, "enrollments"), where("studentId", "==", user.uid));
+        const eq = query(
+          collection(db, "enrollments"),
+          where("studentId", "==", user.uid)
+        );
         const es = await getDocs(eq);
-        setMyEnrolls(es.docs.map(d => d.data().classId));
+        setMyEnrolls(es.docs.map((d) => d.data().classId));
 
-        const rq = query(collection(db, "enrollRequests"), where("studentId", "==", user.uid), where("status", "==", "pending"));
+        const rq = query(
+          collection(db, "enrollRequests"),
+          where("studentId", "==", user.uid),
+          where("status", "==", "pending")
+        );
         const rs = await getDocs(rq);
-        setMyPending(rs.docs.map(d => d.data().classId));
+        setMyPending(rs.docs.map((d) => d.data().classId));
+      } else {
+        setMyEnrolls([]);
+        setMyPending([]);
       }
-    };
-    load();
+    } finally {
+      setLoading(false);
+    }
   }, [user]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const requestEnroll = async (c: any) => {
     if (!user) return;
     // previne dublura
     if (myEnrolls.includes(c.id) || myPending.includes(c.id)) return;
+
     await addDoc(collection(db, "enrollRequests"), {
       classId: c.id,
       studentId: user.uid,
@@ -41,7 +59,11 @@ export default function StudentClasses() {
       status: "pending",
       createdAt: Date.now(),
     });
-    router.replace("/(student)/classes"); // refresh simplu
+
+    // actualizează starea locală fără navigare
+    setMyPending((prev) => [...prev, c.id]);
+    // sau poți reîncărca complet:
+    // await load();
   };
 
   return (
@@ -50,11 +72,17 @@ export default function StudentClasses() {
       <FlatList
         data={classes}
         keyExtractor={(i) => i.id}
+        refreshing={loading}
+        onRefresh={load}
         renderItem={({ item }) => {
           const enrolled = myEnrolls.includes(item.id);
           const pending = myPending.includes(item.id);
           return (
-            <Card style={{ marginVertical: 6 }} onPress={() => router.push(`/(student)/classes/${item.id}`)}>
+            <Card
+              style={{ marginVertical: 6 }}
+              // IMPORTANT: rută RELATIVĂ (suntem deja în /classes)
+              onPress={() => router.push(`./${item.id}`)}
+            >
               <Card.Title title={item.name} />
               <Card.Content>
                 <Text>Profesor: {item.teacherId}</Text>
@@ -62,11 +90,21 @@ export default function StudentClasses() {
                 <Text>End: {item.endDate ?? "-"}</Text>
                 <Text>Recurență: {item.recurrence ?? "none"}</Text>
                 {enrolled ? (
-                  <Button disabled>Înscris(ă)</Button>
+                  <Button disabled style={{ marginTop: 6 }}>
+                    Înscris(ă)
+                  </Button>
                 ) : pending ? (
-                  <Button disabled>În așteptare</Button>
+                  <Button disabled style={{ marginTop: 6 }}>
+                    În așteptare
+                  </Button>
                 ) : (
-                  <Button mode="contained" onPress={() => requestEnroll(item)}>Cere înscriere</Button>
+                  <Button
+                    mode="contained"
+                    onPress={() => requestEnroll(item)}
+                    style={{ marginTop: 6 }}
+                  >
+                    Cere înscriere
+                  </Button>
                 )}
               </Card.Content>
             </Card>
